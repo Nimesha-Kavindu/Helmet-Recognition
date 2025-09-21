@@ -9,6 +9,14 @@ import cv2
 from PIL import Image, ImageTk
 import threading
 import time
+import os
+import sys
+from ultralytics import YOLO
+import numpy as np
+
+# Add utils directory to path
+sys.path.append(os.path.join(os.path.dirname(os.path.dirname(__file__)), 'utils'))
+from helmet_detector import HelmetDetector
 
 class HelmetDetectionApp:
     def __init__(self, root):
@@ -20,9 +28,35 @@ class HelmetDetectionApp:
         self.cap = None
         self.is_detecting = False
         self.model = None
+        self.model_loaded = False
+        self.detection_count = 0
+        
+        # Initialize helmet detector
+        self.helmet_detector = HelmetDetector()
+        
+        # Load models
+        self.load_model()
         
         # Create GUI elements
         self.setup_gui()
+        
+    def load_model(self):
+        """Load the helmet detection models"""
+        try:
+            models_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "models")
+            print(f"Loading models from: {models_dir}")
+            
+            # Load models using helmet detector
+            if self.helmet_detector.load_models(models_dir):
+                self.model_loaded = True
+                print("✓ Helmet detection system loaded successfully!")
+            else:
+                print("✗ Failed to load helmet detection models!")
+                self.model_loaded = False
+                
+        except Exception as e:
+            print(f"Error loading helmet detection system: {str(e)}")
+            self.model_loaded = False
         
     def setup_gui(self):
         """Setup the main GUI interface"""
@@ -61,8 +95,31 @@ class HelmetDetectionApp:
         self.status_label.grid(row=2, column=0, pady=(20, 5))
         
         # Detection info
-        self.detection_info = ttk.Label(control_frame, text="Helmets detected: 0")
+        self.detection_info = ttk.Label(control_frame, text="Helmets: 0 | No Helmets: 0")
         self.detection_info.grid(row=3, column=0, pady=5)
+        
+        # Additional detection info
+        self.extra_info = ttk.Label(control_frame, text="Persons: 0 | Motorcycles: 0")
+        self.extra_info.grid(row=4, column=0, pady=5)
+        
+        # Model status
+        model_status = "Model: Loaded ✓" if self.model_loaded else "Model: Not loaded ✗"
+        self.model_status_label = ttk.Label(control_frame, text=model_status)
+        self.model_status_label.grid(row=5, column=0, pady=5)
+        
+        # Confidence threshold
+        ttk.Label(control_frame, text="Confidence:").grid(row=6, column=0, pady=(20, 0))
+        self.confidence_var = tk.DoubleVar(value=0.5)
+        self.confidence_scale = ttk.Scale(control_frame, from_=0.1, to=0.9, 
+                                         variable=self.confidence_var, orient="horizontal")
+        self.confidence_scale.grid(row=7, column=0, pady=5, sticky=tk.W+tk.E)
+        
+        # Confidence value display
+        self.confidence_label = ttk.Label(control_frame, text="0.5")
+        self.confidence_label.grid(row=8, column=0)
+        
+        # Update confidence display
+        self.confidence_var.trace('w', self.update_confidence_display)
         
         # Configure grid weights
         self.root.columnconfigure(0, weight=1)
@@ -71,8 +128,17 @@ class HelmetDetectionApp:
         main_frame.columnconfigure(1, weight=1)
         main_frame.rowconfigure(1, weight=1)
         
+    def update_confidence_display(self, *args):
+        """Update confidence threshold display"""
+        confidence = self.confidence_var.get()
+        self.confidence_label.config(text=f"{confidence:.1f}")
+    
     def start_detection(self):
         """Start the helmet detection"""
+        if not self.model_loaded:
+            messagebox.showerror("Error", "YOLO model not loaded. Please restart the application.")
+            return
+            
         try:
             # Initialize camera
             self.cap = cv2.VideoCapture(0)
@@ -81,6 +147,7 @@ class HelmetDetectionApp:
                 return
                 
             self.is_detecting = True
+            self.detection_count = 0
             self.start_btn.config(state="disabled")
             self.stop_btn.config(state="normal")
             self.status_label.config(text="Status: Detecting...")
@@ -104,17 +171,28 @@ class HelmetDetectionApp:
         self.video_label.config(image="", text="Camera feed will appear here")
         
     def detection_loop(self):
-        """Main detection loop"""
+        """Main detection loop with helmet detection"""
         while self.is_detecting:
             ret, frame = self.cap.read()
             if not ret:
                 break
-                
-            # TODO: Add helmet detection here
-            # For now, just display the frame
             
+            try:
+                # Run helmet detection
+                confidence_threshold = self.confidence_var.get()
+                detected_frame, detections = self.helmet_detector.detect_helmets_in_frame(
+                    frame, confidence_threshold)
+                
+                # Update detection counts
+                self.root.after(0, self.update_detection_counts, detections)
+                
+            except Exception as e:
+                print(f"Detection error: {e}")
+                detected_frame = frame
+                detections = {'helmets': 0, 'no_helmets': 0, 'persons': 0, 'motorcycles': 0}
+                
             # Convert frame for tkinter
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frame_rgb = cv2.cvtColor(detected_frame, cv2.COLOR_BGR2RGB)
             frame_resized = cv2.resize(frame_rgb, (640, 480))
             
             # Convert to PIL Image
@@ -125,6 +203,14 @@ class HelmetDetectionApp:
             self.root.after(0, self.update_video_display, photo)
             
             time.sleep(0.03)  # ~30 FPS
+    
+    def update_detection_counts(self, detections):
+        """Update detection counts in GUI"""
+        helmet_text = f"Helmets: {detections['helmets']} | No Helmets: {detections['no_helmets']}"
+        extra_text = f"Persons: {detections['persons']} | Motorcycles: {detections['motorcycles']}"
+        
+        self.detection_info.config(text=helmet_text)
+        self.extra_info.config(text=extra_text)
             
     def update_video_display(self, photo):
         """Update the video display in GUI"""
@@ -137,7 +223,17 @@ class HelmetDetectionApp:
         self.root.destroy()
 
 if __name__ == "__main__":
+    print("Starting Motorcycle Helmet Detection System...")
+    print("Loading YOLO model, please wait...")
+    
     root = tk.Tk()
     app = HelmetDetectionApp(root)
     root.protocol("WM_DELETE_WINDOW", app.on_closing)
+    
+    if app.model_loaded:
+        print("✓ Model loaded successfully!")
+        print("✓ Ready for helmet detection!")
+    else:
+        print("✗ Model loading failed!")
+        
     root.mainloop()
