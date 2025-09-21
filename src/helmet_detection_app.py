@@ -22,7 +22,7 @@ class HelmetDetectionApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Motorcycle Helmet Detection System")
-        self.root.geometry("1200x800")
+        self.root.geometry("900x600")
         
         # Initialize variables
         self.cap = None
@@ -30,6 +30,7 @@ class HelmetDetectionApp:
         self.model = None
         self.model_loaded = False
         self.detection_count = 0
+        self.detection_thread = None
         
         # Initialize helmet detector
         self.helmet_detector = HelmetDetector()
@@ -154,6 +155,7 @@ class HelmetDetectionApp:
             
             # Start detection thread
             self.detection_thread = threading.Thread(target=self.detection_loop)
+            self.detection_thread.daemon = True  # Make thread daemon so it dies with main process
             self.detection_thread.start()
             
         except Exception as e:
@@ -162,6 +164,11 @@ class HelmetDetectionApp:
     def stop_detection(self):
         """Stop the helmet detection"""
         self.is_detecting = False
+        
+        # Wait for detection thread to finish
+        if self.detection_thread and self.detection_thread.is_alive():
+            self.detection_thread.join(timeout=2.0)  # Wait up to 2 seconds
+        
         if self.cap:
             self.cap.release()
         
@@ -173,6 +180,9 @@ class HelmetDetectionApp:
     def detection_loop(self):
         """Main detection loop with helmet detection"""
         while self.is_detecting:
+            if not self.cap or not self.cap.isOpened():
+                break
+                
             ret, frame = self.cap.read()
             if not ret:
                 break
@@ -184,7 +194,8 @@ class HelmetDetectionApp:
                     frame, confidence_threshold)
                 
                 # Update detection counts
-                self.root.after(0, self.update_detection_counts, detections)
+                if self.is_detecting:  # Check if still detecting before updating UI
+                    self.root.after(0, self.update_detection_counts, detections)
                 
             except Exception as e:
                 print(f"Detection error: {e}")
@@ -192,17 +203,20 @@ class HelmetDetectionApp:
                 detections = {'helmets': 0, 'no_helmets': 0, 'persons': 0, 'motorcycles': 0}
                 
             # Convert frame for tkinter
-            frame_rgb = cv2.cvtColor(detected_frame, cv2.COLOR_BGR2RGB)
-            frame_resized = cv2.resize(frame_rgb, (640, 480))
-            
-            # Convert to PIL Image
-            pil_image = Image.fromarray(frame_resized)
-            photo = ImageTk.PhotoImage(image=pil_image)
-            
-            # Update GUI in main thread
-            self.root.after(0, self.update_video_display, photo)
+            if self.is_detecting:  # Check if still detecting before UI update
+                frame_rgb = cv2.cvtColor(detected_frame, cv2.COLOR_BGR2RGB)
+                frame_resized = cv2.resize(frame_rgb, (480, 360))  # Smaller size: 480x360 instead of 640x480
+                
+                # Convert to PIL Image
+                pil_image = Image.fromarray(frame_resized)
+                photo = ImageTk.PhotoImage(image=pil_image)
+                
+                # Update GUI in main thread
+                self.root.after(0, self.update_video_display, photo)
             
             time.sleep(0.03)  # ~30 FPS
+        
+        print("Detection loop ended")
     
     def update_detection_counts(self, detections):
         """Update detection counts in GUI"""
@@ -219,8 +233,12 @@ class HelmetDetectionApp:
         
     def on_closing(self):
         """Handle window closing"""
+        print("Closing application...")
         self.stop_detection()
-        self.root.destroy()
+        
+        # Give a moment for cleanup
+        self.root.after(100, self.root.quit)  # Schedule quit after 100ms
+        self.root.after(200, self.root.destroy)  # Schedule destroy after 200ms
 
 if __name__ == "__main__":
     print("Starting Motorcycle Helmet Detection System...")
