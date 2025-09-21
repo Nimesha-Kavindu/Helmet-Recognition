@@ -250,11 +250,11 @@ class HelmetDetector:
                         has_helmet_shape = True
                         break
         
-        # Multiple detection criteria (more flexible)
+        # Conservative detection criteria (reduce false positives)
         criteria_met = 0
         
-        # Criterion 1: Strong color match
-        if max_color_match > 0.20 or total_color_ratio > 0.25:
+        # Criterion 1: Strong color match (more strict)
+        if max_color_match > 0.30 or total_color_ratio > 0.35:
             criteria_met += 1
         
         # Criterion 2: Smooth, uniform surface (helmet-like)
@@ -265,21 +265,25 @@ class HelmetDetector:
         if has_helmet_shape:
             criteria_met += 1
         
-        # Criterion 4: Moderate color match with some shape evidence
-        if total_color_ratio > 0.15 and largest_contour_area > 200:
+        # Criterion 4: Strong color match with shape evidence (more strict)
+        if total_color_ratio > 0.25 and largest_contour_area > 300:
             criteria_met += 1
         
-        # Decision: Need at least 2 out of 4 criteria
-        helmet_detected = criteria_met >= 2
+        # Decision: Need at least 3 out of 4 criteria (more conservative)
+        helmet_detected = criteria_met >= 3
         
-        # Special case: Very strong color evidence alone
-        if max_color_match > 0.35:
+        # Special case: Very strong color evidence alone (higher threshold)
+        if max_color_match > 0.45:
             helmet_detected = True
+        
+        # Additional safety check: reject if color evidence is too weak
+        if max_color_match < 0.15 and total_color_ratio < 0.20:
+            helmet_detected = False
         
         # Debug output for fine-tuning
         if helmet_detected:
-            print(f"HELMET: Criteria met: {criteria_met}/4, Color: {max_color_match:.2f}, Total: {total_color_ratio:.2f}, Shape: {has_helmet_shape}, Smooth: {is_smooth_texture}")
+            print(f"✅ HELMET: Criteria: {criteria_met}/4, Color:{max_color_match:.2f} Surface:{is_smooth_texture} Shape:{has_helmet_shape}")
         else:
-            print(f"NO HELMET: Criteria met: {criteria_met}/4, Color: {max_color_match:.2f}, Total: {total_color_ratio:.2f}")
+            print(f"❌ NO HELMET: Criteria: {criteria_met}/4, Color:{max_color_match:.2f} Total:{total_color_ratio:.2f}")
         
         return helmet_detected
